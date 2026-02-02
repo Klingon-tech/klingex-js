@@ -64,20 +64,25 @@ const client = new KlingEx({
 ```typescript
 // Get all trading pairs
 const markets = await client.markets.list();
+for (const market of markets.slice(0, 5)) {
+  console.log(`${market.base_asset_symbol}-${market.quote_asset_symbol}: ${market.last_price}`);
+}
 
-// Get 24h tickers
+// Get 24h tickers (CMC format - uses underscore "BTC_USDT")
 const tickers = await client.markets.tickers();
+const btcTicker = await client.markets.ticker('BTC_USDT');
+console.log(`BTC_USDT: ${btcTicker?.last_price}`);
 
-// Get orderbook
-const orderbook = await client.markets.orderbook('BTC-USDT');
+// Get orderbook (marketId is a number)
+const orderbook = await client.markets.orderbook(1);
 console.log('Best bid:', orderbook.bids[0]);
 console.log('Best ask:', orderbook.asks[0]);
 
 // Get OHLCV (candlestick) data
 const candles = await client.markets.ohlcv(1, '1h', { limit: 100 });
 
-// Get recent trades
-const trades = await client.markets.trades('BTC-USDT');
+// Get recent trades (marketId is a number)
+const trades = await client.markets.trades(1);
 ```
 
 ### Orders
