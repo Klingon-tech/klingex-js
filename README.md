@@ -161,27 +161,6 @@ const balances = await client.wallet.balances();
 // Get specific balance
 const btc = await client.wallet.balance('BTC');
 console.log(`Available: ${btc?.human_available} BTC`);
-
-// Get deposit address
-const address = await client.wallet.depositAddress(1);
-console.log(`Send BTC to: ${address.address}`);
-
-// Withdraw
-const withdrawal = await client.wallet.withdraw({
-  assetId: 1,
-  symbol: 'BTC',
-  address: 'bc1q...',
-  amount: '0.1'
-});
-
-// If 2FA is required
-if (withdrawal.requires_2fa) {
-  await client.wallet.confirm2FA(withdrawal.session_token!, '123456');
-}
-
-// Get history
-const deposits = await client.wallet.deposits();
-const withdrawals = await client.wallet.withdrawals();
 ```
 
 ### Invoices (Payment Processing)
