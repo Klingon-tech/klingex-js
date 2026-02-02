@@ -6,7 +6,7 @@ import type {
   CancelOrderParams,
   CancelOrderResponse,
   GetOrdersParams,
-  ApiResponse,
+  UserOrdersResponse,
 } from '../types';
 
 export class OrdersEndpoint {
@@ -24,7 +24,7 @@ export class OrdersEndpoint {
    * const order = await client.orders.submit({
    *   symbol: 'BTC-USDT',
    *   tradingPairId: 1,
-   *   side: 'buy',
+   *   side: 'BUY',
    *   quantity: '1.5',
    *   price: '50000.00'
    * });
@@ -34,7 +34,7 @@ export class OrdersEndpoint {
    * const order = await client.orders.submit({
    *   symbol: 'BTC-USDT',
    *   tradingPairId: 1,
-   *   side: 'buy',
+   *   side: 'BUY',
    *   quantity: '1.0',
    *   price: '0',
    *   slippage: 0.01  // 1% slippage tolerance
@@ -43,7 +43,7 @@ export class OrdersEndpoint {
   async submit(params: SubmitOrderParams): Promise<SubmitOrderResponse> {
     const rawValues = params.rawValues ?? !this.humanReadableDefault;
 
-    const response = await this.http.post<SubmitOrderResponse>('/api/submit-order', {
+    return this.http.post<SubmitOrderResponse>('/api/submit-order', {
       symbol: params.symbol,
       tradingPairId: params.tradingPairId,
       side: params.side.toUpperCase(),
@@ -52,18 +52,17 @@ export class OrdersEndpoint {
       rawValues,
       slippage: params.slippage,
     });
-
-    return response;
   }
 
   /**
    * Cancel an existing order
    * @param params - Order ID and trading pair ID
    * @example
-   * await client.orders.cancel({
+   * const result = await client.orders.cancel({
    *   orderId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
    *   tradingPairId: 1
    * });
+   * console.log(`Released balance: ${result.released_balance}`);
    */
   async cancel(params: CancelOrderParams): Promise<CancelOrderResponse> {
     return this.http.post<CancelOrderResponse>('/api/cancel-order', {
@@ -100,7 +99,7 @@ export class OrdersEndpoint {
    * const orders = await client.orders.list({ tradingPairId: 1 });
    */
   async list(params: GetOrdersParams = {}): Promise<Order[]> {
-    const response = await this.http.get<{ orders: Order[] }>('/api/user-orders', {
+    const response = await this.http.get<UserOrdersResponse>('/api/user-orders', {
       tradingPairId: params.tradingPairId,
       status: params.status,
       limit: params.limit || 50,
@@ -135,12 +134,9 @@ export class OrdersEndpoint {
    * Get a specific order by ID
    * @param orderId - Order UUID
    */
-  async get(orderId: string): Promise<Order> {
-    const response = await this.http.get<ApiResponse<Order>>(`/api/orders/${orderId}`);
-    if (!response.data) {
-      throw new Error('Order not found');
-    }
-    return response.data;
+  async get(orderId: string): Promise<Order | undefined> {
+    const orders = await this.list();
+    return orders.find(o => o.id === orderId);
   }
 
   // =========================================================================
@@ -149,7 +145,7 @@ export class OrdersEndpoint {
 
   /**
    * Place a limit buy order (human-readable values)
-   * @param symbol - Trading pair symbol
+   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
    * @param tradingPairId - Trading pair ID
    * @param quantity - Amount to buy
    * @param price - Price per unit
@@ -163,7 +159,7 @@ export class OrdersEndpoint {
     return this.submit({
       symbol,
       tradingPairId,
-      side: 'buy',
+      side: 'BUY',
       quantity,
       price,
     });
@@ -171,7 +167,7 @@ export class OrdersEndpoint {
 
   /**
    * Place a limit sell order (human-readable values)
-   * @param symbol - Trading pair symbol
+   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
    * @param tradingPairId - Trading pair ID
    * @param quantity - Amount to sell
    * @param price - Price per unit
@@ -185,7 +181,7 @@ export class OrdersEndpoint {
     return this.submit({
       symbol,
       tradingPairId,
-      side: 'sell',
+      side: 'SELL',
       quantity,
       price,
     });
@@ -193,7 +189,7 @@ export class OrdersEndpoint {
 
   /**
    * Place a market buy order
-   * @param symbol - Trading pair symbol
+   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
    * @param tradingPairId - Trading pair ID
    * @param quantity - Amount to buy
    * @param slippage - Slippage tolerance (0-1, e.g., 0.01 for 1%)
@@ -207,7 +203,7 @@ export class OrdersEndpoint {
     return this.submit({
       symbol,
       tradingPairId,
-      side: 'buy',
+      side: 'BUY',
       quantity,
       price: '0',
       slippage,
@@ -216,7 +212,7 @@ export class OrdersEndpoint {
 
   /**
    * Place a market sell order
-   * @param symbol - Trading pair symbol
+   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
    * @param tradingPairId - Trading pair ID
    * @param quantity - Amount to sell
    * @param slippage - Slippage tolerance (0-1, e.g., 0.01 for 1%)
@@ -230,7 +226,7 @@ export class OrdersEndpoint {
     return this.submit({
       symbol,
       tradingPairId,
-      side: 'sell',
+      side: 'SELL',
       quantity,
       price: '0',
       slippage,

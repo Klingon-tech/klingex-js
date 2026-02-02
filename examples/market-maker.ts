@@ -10,12 +10,12 @@
  * - Basic risk management
  */
 
-import { KlingEx, Order, InsufficientFundsError } from 'klingex';
+import { KlingEx, Order, InsufficientFundsError, Market } from 'klingex';
 
 // Configuration
 const CONFIG = {
-  symbol: 'BTC-USDT',
-  tradingPairId: 1,
+  baseSymbol: 'BTC',
+  quoteSymbol: 'USDT',
   // Spread from mid price (0.5% each side = 1% total spread)
   spreadPercent: 0.005,
   // Order size in base currency
@@ -28,6 +28,7 @@ const CONFIG = {
 
 class SimpleMarketMaker {
   private client: KlingEx;
+  private market: Market | null = null;
   private currentBidOrder: Order | null = null;
   private currentAskOrder: Order | null = null;
   private lastMidPrice: number = 0;
@@ -38,10 +39,26 @@ class SimpleMarketMaker {
   }
 
   async start() {
-    console.log('🤖 Starting Market Maker...');
-    console.log(`   Symbol: ${CONFIG.symbol}`);
+    console.log('Starting Market Maker...');
+
+    // Find the market
+    const markets = await this.client.markets.list();
+    this.market = markets.find(
+      m =>
+        m.base_asset_symbol === CONFIG.baseSymbol &&
+        m.quote_asset_symbol === CONFIG.quoteSymbol
+    ) || null;
+
+    if (!this.market) {
+      console.error(`Market ${CONFIG.baseSymbol}-${CONFIG.quoteSymbol} not found`);
+      process.exit(1);
+    }
+
+    console.log(`   Market: ${CONFIG.baseSymbol}-${CONFIG.quoteSymbol} (ID: ${this.market.id})`);
     console.log(`   Spread: ${CONFIG.spreadPercent * 100}%`);
-    console.log(`   Order Size: ${CONFIG.orderSize}\n`);
+    console.log(`   Order Size: ${CONFIG.orderSize}`);
+    console.log(`   Maker Fee: ${this.market.maker_fee_rate}`);
+    console.log(`   Taker Fee: ${this.market.taker_fee_rate}\n`);
 
     this.running = true;
 
@@ -57,23 +74,25 @@ class SimpleMarketMaker {
 
     // Handle shutdown
     process.on('SIGINT', async () => {
-      console.log('\n🛑 Shutting down...');
+      console.log('\nShutting down...');
       this.running = false;
       clearInterval(interval);
       await this.cancelAllOrders();
       process.exit(0);
     });
 
-    console.log('📡 Market maker running. Press Ctrl+C to stop.\n');
+    console.log('Market maker running. Press Ctrl+C to stop.\n');
   }
 
   private async updateOrders() {
+    if (!this.market) return;
+
     try {
       // Get current orderbook to calculate mid price
-      const orderbook = await this.client.markets.orderbook(CONFIG.symbol, 1);
+      const orderbook = await this.client.markets.orderbook(this.market.id);
 
       if (!orderbook.bids.length || !orderbook.asks.length) {
-        console.log('⚠️ Empty orderbook, skipping update');
+        console.log('Empty orderbook, skipping update');
         return;
       }
 
@@ -89,13 +108,19 @@ class SimpleMarketMaker {
         }
       }
 
-      console.log(`📊 Mid price: ${midPrice.toFixed(2)} | Spread: ${((bestAsk - bestBid) / midPrice * 100).toFixed(3)}%`);
+      console.log(
+        `Mid price: ${midPrice.toFixed(2)} | Spread: ${((bestAsk - bestBid) / midPrice * 100).toFixed(3)}%`
+      );
 
       this.lastMidPrice = midPrice;
 
       // Calculate our bid and ask prices
-      const ourBidPrice = (midPrice * (1 - CONFIG.spreadPercent)).toFixed(2);
-      const ourAskPrice = (midPrice * (1 + CONFIG.spreadPercent)).toFixed(2);
+      const ourBidPrice = (midPrice * (1 - CONFIG.spreadPercent)).toFixed(
+        this.market.price_decimals
+      );
+      const ourAskPrice = (midPrice * (1 + CONFIG.spreadPercent)).toFixed(
+        this.market.price_decimals
+      );
 
       // Cancel existing orders if prices changed significantly
       await this.cancelAllOrders();
@@ -103,24 +128,25 @@ class SimpleMarketMaker {
       // Place new orders
       await this.placeBidOrder(ourBidPrice);
       await this.placeAskOrder(ourAskPrice);
-
     } catch (error) {
       console.error('Error updating orders:', error);
     }
   }
 
   private async placeBidOrder(price: string) {
+    if (!this.market) return;
+
     try {
       const result = await this.client.orders.limitBuy(
-        CONFIG.symbol,
-        CONFIG.tradingPairId,
+        `${CONFIG.baseSymbol}-${CONFIG.quoteSymbol}`,
+        this.market.id,
         CONFIG.orderSize,
         price
       );
-      console.log(`🟢 BID placed: ${CONFIG.orderSize} @ ${price} (${result.order_id})`);
+      console.log(`BID placed: ${CONFIG.orderSize} @ ${price} (${result.order_id})`);
     } catch (error) {
       if (error instanceof InsufficientFundsError) {
-        console.log('⚠️ Insufficient funds for bid order');
+        console.log('Insufficient funds for bid order');
       } else {
         throw error;
       }
@@ -128,17 +154,19 @@ class SimpleMarketMaker {
   }
 
   private async placeAskOrder(price: string) {
+    if (!this.market) return;
+
     try {
       const result = await this.client.orders.limitSell(
-        CONFIG.symbol,
-        CONFIG.tradingPairId,
+        `${CONFIG.baseSymbol}-${CONFIG.quoteSymbol}`,
+        this.market.id,
         CONFIG.orderSize,
         price
       );
-      console.log(`🔴 ASK placed: ${CONFIG.orderSize} @ ${price} (${result.order_id})`);
+      console.log(`ASK placed: ${CONFIG.orderSize} @ ${price} (${result.order_id})`);
     } catch (error) {
       if (error instanceof InsufficientFundsError) {
-        console.log('⚠️ Insufficient funds for ask order');
+        console.log('Insufficient funds for ask order');
       } else {
         throw error;
       }
@@ -146,10 +174,13 @@ class SimpleMarketMaker {
   }
 
   private async cancelAllOrders() {
+    if (!this.market) return;
+
     try {
-      const result = await this.client.orders.cancelAll(CONFIG.tradingPairId);
+      const result = await this.client.orders.cancelAll(this.market.id);
       if (result.cancelledCount > 0) {
-        console.log(`❌ Cancelled ${result.cancelledCount} orders`);
+        console.log(`Cancelled ${result.cancelledCount} orders`);
+        console.log(`Released balance: ${result.totalReleasedBalance}`);
       }
     } catch (error) {
       console.error('Error cancelling orders:', error);

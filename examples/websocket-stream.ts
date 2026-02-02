@@ -15,7 +15,22 @@ async function main() {
     apiKey: process.env.KLINGEX_API_KEY || 'your-api-key-here',
   });
 
-  console.log('🔌 Connecting to WebSocket...');
+  // First, get market info to find the market ID
+  const markets = await client.markets.list();
+  const btcUsdt = markets.find(
+    m => m.base_asset_symbol === 'BTC' && m.quote_asset_symbol === 'USDT'
+  );
+
+  if (!btcUsdt) {
+    console.error('BTC-USDT market not found');
+    process.exit(1);
+  }
+
+  console.log(`Found BTC-USDT market (ID: ${btcUsdt.id})`);
+  console.log(`Current price: ${btcUsdt.last_price}`);
+  console.log('');
+
+  console.log('Connecting to WebSocket...');
 
   // Set up error handler
   client.ws.onError((error) => {
@@ -24,12 +39,12 @@ async function main() {
 
   // Connect
   await client.ws.connect();
-  console.log('✅ Connected!\n');
+  console.log('Connected!\n');
 
   // =========================================================================
   // Subscribe to Orderbook Updates
   // =========================================================================
-  console.log('📖 Subscribing to BTC-USDT orderbook...');
+  console.log('Subscribing to BTC-USDT orderbook...');
   const unsubOrderbook = client.ws.orderbook('BTC-USDT', (orderbook) => {
     const bestBid = orderbook.bids[0];
     const bestAsk = orderbook.asks[0];
@@ -43,44 +58,44 @@ async function main() {
   // =========================================================================
   // Subscribe to Trade Updates
   // =========================================================================
-  console.log('💹 Subscribing to BTC-USDT trades...');
+  console.log('Subscribing to BTC-USDT trades...');
   client.ws.trades('BTC-USDT', (trade) => {
-    const side = trade.side === 'buy' ? '🟢 BUY' : '🔴 SELL';
+    const side = trade.side === 'buy' ? 'BUY' : 'SELL';
     console.log(`[Trade] ${side} ${trade.quantity} @ ${trade.price}`);
   });
 
   // =========================================================================
   // Subscribe to Ticker Updates
   // =========================================================================
-  console.log('📊 Subscribing to BTC-USDT ticker...');
+  console.log('Subscribing to BTC-USDT ticker...');
   client.ws.ticker('BTC-USDT', (ticker) => {
     console.log(
-      `[Ticker] Price: ${ticker.last_price} | 24h: ${ticker.price_change_percent_24h}% | Vol: ${ticker.volume_24h}`
+      `[Ticker] Price: ${ticker.last_price} | Bid: ${ticker.bid} | Ask: ${ticker.ask}`
     );
   });
 
   // =========================================================================
   // Subscribe to User Order Updates (requires authentication)
   // =========================================================================
-  console.log('📝 Subscribing to user order updates...');
+  console.log('Subscribing to user order updates...');
   client.ws.userOrders((order) => {
     console.log(`[Order Update] ${order.id} - ${order.status}`);
-    console.log(`  Side: ${order.side} | Amount: ${order.human_amount} | Price: ${order.human_price}`);
+    console.log(`  Side: ${order.side} | Amount: ${order.amount} | Price: ${order.price}`);
   });
 
   // =========================================================================
   // Subscribe to User Balance Updates (requires authentication)
   // =========================================================================
-  console.log('💰 Subscribing to user balance updates...\n');
+  console.log('Subscribing to user balance updates...\n');
   client.ws.userBalances((balance) => {
     console.log(`[Balance Update] ${balance.symbol}: ${balance.human_available} available`);
   });
 
-  console.log('📡 Streaming data... Press Ctrl+C to exit\n');
+  console.log('Streaming data... Press Ctrl+C to exit\n');
 
   // Keep the process running
   process.on('SIGINT', () => {
-    console.log('\n👋 Disconnecting...');
+    console.log('\nDisconnecting...');
     unsubOrderbook(); // Unsubscribe from orderbook
     client.ws.disconnect();
     process.exit(0);

@@ -84,7 +84,7 @@ export class KlingExWebSocket {
           }
         };
 
-        this.ws.onerror = (error) => {
+        this.ws.onerror = (_event) => {
           this.isConnecting = false;
           const err = new Error('WebSocket error');
           this.errorHandler?.(err);

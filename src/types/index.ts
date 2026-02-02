@@ -36,38 +36,65 @@ export interface PaginatedResponse<T> {
 }
 
 // ============================================================================
+// Asset Types
+// ============================================================================
+
+export interface Asset {
+  id: number;
+  symbol: string;
+  name: string;
+  decimals: number;
+  min_deposit: string;
+  min_withdrawal: string;
+  withdrawal_fee: string;
+  is_active?: boolean;
+}
+
+export interface AssetsResponse {
+  assets: Asset[];
+}
+
+// ============================================================================
 // Market Types
 // ============================================================================
 
 export interface Market {
   id: number;
-  symbol: string;
-  base_asset: string;
-  quote_asset: string;
   base_asset_id: number;
   quote_asset_id: number;
-  is_active: boolean;
   min_trade_amount: string;
   max_trade_amount: string;
   tick_size: string;
   step_size: string;
+  maker_fee_rate: string;
+  taker_fee_rate: string;
   price_decimals: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  base_asset_symbol: string;
+  base_asset_name: string;
+  quote_asset_symbol: string;
+  quote_asset_name: string;
+  volume_24h: string;
+  priceChange24h: string;
+  last_price: string;
   base_decimals: number;
   quote_decimals: number;
+  volume_24h_human: string;
 }
 
 export interface Ticker {
-  symbol: string;
+  ticker_id: string;
+  base_currency: string;
+  target_currency: string;
   last_price: string;
-  price_change_24h: string;
-  price_change_percent_24h: string;
-  high_24h: string;
-  low_24h: string;
-  volume_24h: string;
-  quote_volume_24h: string;
+  base_volume: string;
+  target_volume: string;
   bid: string;
   ask: string;
-  timestamp: string;
+  high: string;
+  low: string;
 }
 
 export interface OrderbookEntry {
@@ -76,19 +103,29 @@ export interface OrderbookEntry {
 }
 
 export interface Orderbook {
-  symbol: string;
+  trading_pair_id: number;
+  base_symbol: string;
+  quote_symbol: string;
   bids: OrderbookEntry[];
   asks: OrderbookEntry[];
-  timestamp: string;
+}
+
+export interface OrderbookRaw {
+  trading_pair_id: number;
+  base_symbol: string;
+  quote_symbol: string;
+  bids: string[][];
+  asks: string[][];
 }
 
 export interface OHLCV {
-  timestamp: string;
-  open: string;
-  high: string;
-  low: string;
-  close: string;
+  time_bucket: string;
+  open_price: string;
+  high_price: string;
+  low_price: string;
+  close_price: string;
   volume: string;
+  number_of_trades: number;
 }
 
 export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w';
@@ -121,22 +158,24 @@ export interface SubmitOrderParams {
 export interface Order {
   id: string;
   trading_pair_id: number;
-  base_symbol?: string;
-  quote_symbol?: string;
+  side: 'buy' | 'sell';
   type: OrderType;
-  side: OrderSide;
-  status: OrderStatus;
   price: string;
   amount: string;
   filled_amount: string;
+  status: OrderStatus;
   created_at: string;
   updated_at: string;
-  // Human-readable values
+  // Human-readable values (computed by SDK)
   human_price?: string;
   human_amount?: string;
   human_filled_amount?: string;
   human_remaining?: string;
   human_total?: string;
+}
+
+export interface UserOrdersResponse {
+  orders: Order[];
 }
 
 export interface SubmitOrderResponse {
@@ -151,7 +190,7 @@ export interface CancelOrderParams {
 
 export interface CancelOrderResponse {
   message: string;
-  refunded_amount?: string;
+  released_balance: string;
 }
 
 export interface GetOrdersParams {
@@ -165,14 +204,19 @@ export interface GetOrdersParams {
 // ============================================================================
 
 export interface Balance {
-  asset_id: number;
-  symbol: string;
-  name: string;
   balance: string;
   locked_balance: string;
-  available_balance: string;
-  usd_value?: string;
-  // Human-readable
+  wallet_id: string;
+  deposit_address: string;
+  id: number;
+  symbol: string;
+  name: string;
+  decimals: number;
+  min_deposit: string;
+  min_withdrawal: string;
+  withdrawal_fee: string;
+  // Computed by SDK
+  available_balance?: string;
   human_balance?: string;
   human_locked?: string;
   human_available?: string;
@@ -181,7 +225,7 @@ export interface Balance {
 export interface DepositAddress {
   address: string;
   memo?: string;
-  network: string;
+  network?: string;
 }
 
 export interface WithdrawParams {

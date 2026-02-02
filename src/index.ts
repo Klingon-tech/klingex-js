@@ -20,10 +20,15 @@ export type {
   ApiResponse,
   PaginatedResponse,
 
+  // Assets
+  Asset,
+  AssetsResponse,
+
   // Markets
   Market,
   Ticker,
   Orderbook,
+  OrderbookRaw,
   OrderbookEntry,
   OHLCV,
   Timeframe,
@@ -38,6 +43,7 @@ export type {
   CancelOrderParams,
   CancelOrderResponse,
   GetOrdersParams,
+  UserOrdersResponse,
 
   // Wallet
   Balance,
