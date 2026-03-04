@@ -1,6 +1,6 @@
 {
   "name": "klingex",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Official JavaScript/TypeScript SDK for KlingEx Exchange API",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

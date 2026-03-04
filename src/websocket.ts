@@ -6,6 +6,10 @@ import type {
   Order,
   Balance,
   Ticker,
+  WsOrderResult,
+  WsCancelResult,
+  WsPlaceOrderParams,
+  WsCancelOrderParams,
 } from './types';
 
 type MessageHandler<T = unknown> = (data: T) => void;
@@ -15,6 +19,12 @@ interface Subscription {
   channel: WebSocketChannel;
   symbol?: string;
   handler: MessageHandler;
+}
+
+interface PendingRequest {
+  resolve: (value: any) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 export class KlingExWebSocket {
@@ -29,6 +39,7 @@ export class KlingExWebSocket {
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private isConnecting = false;
   private errorHandler?: ErrorHandler;
+  private pendingRequests = new Map<string, PendingRequest>();
 
   constructor(
     url: string,
@@ -78,6 +89,7 @@ export class KlingExWebSocket {
         this.ws.onclose = (event) => {
           this.isConnecting = false;
           this.stopPingInterval();
+          this.rejectAllPending('Connection closed');
 
           if (this.options.reconnect && !event.wasClean) {
             this.scheduleReconnect();
@@ -107,6 +119,7 @@ export class KlingExWebSocket {
   disconnect(): void {
     this.options.reconnect = false;
     this.stopPingInterval();
+    this.rejectAllPending('Client disconnected');
 
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
@@ -127,6 +140,50 @@ export class KlingExWebSocket {
   onError(handler: ErrorHandler): void {
     this.errorHandler = handler;
   }
+
+  // =========================================================================
+  // Trading Methods
+  // =========================================================================
+
+  /**
+   * Place an order via WebSocket
+   * @param params - Order parameters
+   * @returns Promise resolving to the order result
+   */
+  async placeOrder(params: WsPlaceOrderParams): Promise<WsOrderResult> {
+    const result = await this.sendRequest('place_order', {
+      symbol: params.symbol,
+      tradingPairId: params.tradingPairId,
+      side: params.side,
+      quantity: params.quantity,
+      price: params.price,
+      rawValues: params.rawValues,
+    });
+    if (!result.success) {
+      throw new Error(result.error || 'Order failed');
+    }
+    return result as WsOrderResult;
+  }
+
+  /**
+   * Cancel an order via WebSocket
+   * @param params - Cancel parameters
+   * @returns Promise resolving to the cancel result
+   */
+  async cancelOrder(params: WsCancelOrderParams): Promise<WsCancelResult> {
+    const result = await this.sendRequest('cancel_order', {
+      orderId: params.orderId,
+      tradingPairId: params.tradingPairId,
+    });
+    if (!result.success) {
+      throw new Error(result.error || 'Cancel failed');
+    }
+    return result as WsCancelResult;
+  }
+
+  // =========================================================================
+  // Subscription Methods
+  // =========================================================================
 
   /**
    * Subscribe to orderbook updates
@@ -180,9 +237,52 @@ export class KlingExWebSocket {
     return this.subscribe('user.balances', undefined, handler);
   }
 
+  /**
+   * Subscribe to user trade fill notifications (requires auth)
+   * @param handler - Callback for trade fills
+   */
+  userTrades(handler: MessageHandler): () => void {
+    return this.subscribe('user.trades', undefined, handler);
+  }
+
+  /**
+   * Subscribe to account security events (requires auth)
+   * Receives login alerts, password changes, API key changes, 2FA events.
+   * @param handler - Callback for account events
+   */
+  accountEvents(handler: MessageHandler): () => void {
+    return this.subscribe('user.account', undefined, handler);
+  }
+
   // =========================================================================
   // Private methods
   // =========================================================================
+
+  private sendRequest(action: string, data: Record<string, any>, timeout = 10000): Promise<any> {
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error('Request timeout'));
+      }, timeout);
+
+      this.pendingRequests.set(requestId, {
+        resolve: (v) => { clearTimeout(timer); resolve(v); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+        timer,
+      });
+
+      this.send({ action, requestId, ...data });
+    });
+  }
+
+  private rejectAllPending(reason: string): void {
+    for (const [, pending] of this.pendingRequests) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(reason));
+    }
+    this.pendingRequests.clear();
+  }
 
   private subscribe<T>(
     channel: WebSocketChannel,
@@ -235,22 +335,34 @@ export class KlingExWebSocket {
 
   private handleMessage(data: string): void {
     try {
-      const message = JSON.parse(data) as WebSocketMessage;
+      const message = JSON.parse(data) as Record<string, any>;
 
       // Handle pong
-      if ((message as unknown as { type: string }).type === 'pong') {
+      if (message.type === 'pong') {
         return;
       }
 
-      // Find matching subscription
-      const key = message.data && typeof message.data === 'object' && 'symbol' in message.data
-        ? `${message.channel}:${(message.data as { symbol: string }).symbol}`
-        : message.channel;
+      // Handle request-response correlation for trading results
+      if (message.type === 'order_result' || message.type === 'cancel_result') {
+        const requestId = message.requestId;
+        if (requestId && this.pendingRequests.has(requestId)) {
+          const pending = this.pendingRequests.get(requestId)!;
+          this.pendingRequests.delete(requestId);
+          pending.resolve(message);
+        }
+        // Still dispatch to subscription handlers
+      }
 
-      const subscription = this.subscriptions.get(key) || this.subscriptions.get(message.channel);
+      // Find matching subscription
+      const wsMessage = message as WebSocketMessage;
+      const key = wsMessage.data && typeof wsMessage.data === 'object' && 'symbol' in (wsMessage.data as object)
+        ? `${wsMessage.channel}:${(wsMessage.data as { symbol: string }).symbol}`
+        : wsMessage.channel;
+
+      const subscription = this.subscriptions.get(key) || this.subscriptions.get(wsMessage.channel);
 
       if (subscription) {
-        subscription.handler(message.data);
+        subscription.handler(wsMessage.data);
       }
     } catch (error) {
       this.errorHandler?.(error instanceof Error ? error : new Error('Failed to parse message'));

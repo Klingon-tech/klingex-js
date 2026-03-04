@@ -297,13 +297,42 @@ export type WebSocketChannel =
   | 'trades'
   | 'ticker'
   | 'user.orders'
-  | 'user.balances';
+  | 'user.balances'
+  | 'user.trades'
+  | 'user.account';
 
 export interface WebSocketMessage<T = unknown> {
   channel: WebSocketChannel;
   event: string;
   data: T;
   timestamp: string;
+}
+
+export interface WsOrderResult {
+  success: boolean;
+  orderId?: string;
+  error?: string;
+  requestId: string;
+}
+
+export interface WsCancelResult {
+  success: boolean;
+  error?: string;
+  requestId: string;
+}
+
+export interface WsPlaceOrderParams {
+  symbol: string;
+  tradingPairId: number;
+  side: string;
+  quantity: string;
+  price: string;
+  rawValues?: boolean;
+}
+
+export interface WsCancelOrderParams {
+  orderId: string;
+  tradingPairId: number;
 }
 
 export interface WebSocketOptions {

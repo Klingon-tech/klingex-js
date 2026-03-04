@@ -234,6 +234,50 @@ unsubTrades();
 client.ws.disconnect();
 ```
 
+### WebSocket Trading
+
+Place and cancel orders directly over the WebSocket connection for lower latency. Each request uses `requestId` for response correlation and returns a Promise.
+
+```typescript
+await client.ws.connect();
+
+// Place a limit order via WebSocket
+try {
+  const result = await client.ws.placeOrder({
+    symbol: 'BTC-USDT',
+    tradingPairId: 1,
+    side: 'BUY',
+    quantity: '0.001',
+    price: '50000',
+    rawValues: false,
+  });
+  console.log(`Order placed: ${result.orderId}`);
+} catch (error) {
+  console.error('Order failed:', error);
+}
+
+// Cancel an order via WebSocket
+try {
+  const result = await client.ws.cancelOrder({
+    orderId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+    tradingPairId: 1,
+  });
+  console.log(`Cancelled: ${result.success}`);
+} catch (error) {
+  console.error('Cancel failed:', error);
+}
+
+// Subscribe to user trade fills
+const unsubTrades = client.ws.userTrades((trade) => {
+  console.log('Trade fill:', trade);
+});
+
+// Subscribe to account security events (login, 2FA, API key changes)
+const unsubAccount = client.ws.accountEvents((event) => {
+  console.log('Account event:', event);
+});
+```
+
 ## Error Handling
 
 ```typescript
