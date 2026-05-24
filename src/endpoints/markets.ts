@@ -1,12 +1,15 @@
 import { HttpClient } from '../http';
 import type {
   Market,
+  MarketInfo,
+  MarketSparklinesResponse,
   Ticker,
   Orderbook,
   OrderbookRaw,
   OHLCV,
   Timeframe,
   Asset,
+  AssetInfo,
   AssetsResponse,
 } from '../types';
 
@@ -14,90 +17,100 @@ export class MarketsEndpoint {
   constructor(private http: HttpClient) {}
 
   /**
-   * Get all available markets/trading pairs
-   * @example
-   * const markets = await client.markets.list();
-   * // Returns full market info including:
-   * // - base_asset_symbol, quote_asset_symbol
-   * // - maker_fee_rate, taker_fee_rate
-   * // - last_price, volume_24h, priceChange24h
+   * Get all trading pairs.
    */
   async list(): Promise<Market[]> {
     return this.http.get<Market[]>('/api/markets');
   }
 
   /**
-   * Get a specific market by ID
-   * @param marketId - The market/trading pair ID
+   * Get a specific market by ID.
    */
   async get(marketId: number): Promise<Market | undefined> {
     const markets = await this.list();
-    return markets.find(m => m.id === marketId);
+    return markets.find((m) => m.id === marketId);
   }
 
   /**
-   * Find a market by symbol pair
-   * @param baseSymbol - Base asset symbol (e.g., "BTC")
-   * @param quoteSymbol - Quote asset symbol (e.g., "USDT")
+   * Find a market by base/quote symbols (case-insensitive).
    */
   async findBySymbols(baseSymbol: string, quoteSymbol: string): Promise<Market | undefined> {
     const markets = await this.list();
     return markets.find(
-      m =>
+      (m) =>
         m.base_asset_symbol.toUpperCase() === baseSymbol.toUpperCase() &&
         m.quote_asset_symbol.toUpperCase() === quoteSymbol.toUpperCase()
     );
   }
 
   /**
-   * Get all tickers with 24h price data (CMC format)
-   * @example
-   * const tickers = await client.markets.tickers();
-   * // Returns ticker_id as "BTC_USDT" format
+   * Get sparkline data (recent price points) for every market.
+   *
+   * @param timeframe - OHLCV timeframe (e.g. "1h", "1D"). Default "1D".
+   * @param limit - Number of points to return per market (1..10000, default 30).
+   */
+  async sparklines(
+    timeframe = '1D',
+    limit = 30
+  ): Promise<MarketSparklinesResponse> {
+    return this.http.get<MarketSparklinesResponse>('/api/markets/sparklines', {
+      timeframe,
+      limit,
+    });
+  }
+
+  /**
+   * Get just the trading rules (decimals, tick/step sizes, fees) for a pair.
+   * Public endpoint.
+   */
+  async marketInfo(baseAssetSymbol: string, quoteAssetSymbol: string): Promise<MarketInfo | undefined> {
+    return this.http.get<MarketInfo>('/api/market-info', {
+      baseAssetSymbol,
+      quoteAssetSymbol,
+    });
+  }
+
+  /**
+   * Look up an asset by numeric ID or symbol. Public endpoint.
+   */
+  async assetInfo(idOrSymbol: number | string): Promise<AssetInfo | undefined> {
+    if (typeof idOrSymbol === 'number') {
+      return this.http.get<AssetInfo>(`/api/asset-info/${idOrSymbol}`);
+    }
+    return this.http.get<AssetInfo>(`/api/asset-info/symbol/${encodeURIComponent(idOrSymbol)}`);
+  }
+
+  /**
+   * Get all CMC-format tickers.
    */
   async tickers(): Promise<Ticker[]> {
     return this.http.get<Ticker[]>('/api/tickers');
   }
 
   /**
-   * Get ticker for a specific symbol pair
-   * @param tickerId - Ticker ID in CMC format (e.g., "BTC_USDT")
+   * Find a ticker by its CMC-format ID (e.g. "BTC_USDT").
    */
   async ticker(tickerId: string): Promise<Ticker | undefined> {
     const tickers = await this.tickers();
-    return tickers.find(t => t.ticker_id === tickerId);
+    return tickers.find((t) => t.ticker_id === tickerId);
   }
 
-  /**
-   * Get ticker by base and quote currency
-   * @param baseCurrency - Base currency symbol (e.g., "BTC")
-   * @param targetCurrency - Target/quote currency symbol (e.g., "USDT")
-   */
   async tickerByPair(baseCurrency: string, targetCurrency: string): Promise<Ticker | undefined> {
     const tickers = await this.tickers();
     return tickers.find(
-      t =>
+      (t) =>
         t.base_currency.toUpperCase() === baseCurrency.toUpperCase() &&
         t.target_currency.toUpperCase() === targetCurrency.toUpperCase()
     );
   }
 
   /**
-   * Get orderbook for a trading pair
-   * @param marketId - The market/trading pair ID
-   * @param options - Options for the orderbook request
-   * @example
-   * const orderbook = await client.markets.orderbook(1);
-   * console.log('Best bid:', orderbook.bids[0]);
-   * console.log('Best ask:', orderbook.asks[0]);
+   * Get orderbook for a trading pair in the UI format (price/quantity tuples).
    */
-  async orderbook(
-    marketId: number,
-    options: { isCmc?: boolean } = {}
-  ): Promise<Orderbook> {
+  async orderbook(marketId: number): Promise<Orderbook> {
     const response = await this.http.get<OrderbookRaw>('/api/orderbook', {
       marketId,
-      isCmc: options.isCmc ?? false,
+      isCmc: false,
     });
 
     return {
@@ -110,26 +123,17 @@ export class MarketsEndpoint {
   }
 
   /**
-   * Get raw orderbook (original API format with arrays)
-   * @param marketId - The market/trading pair ID
+   * Get the raw orderbook (arrays of `[price, quantity]`).
    */
-  async orderbookRaw(
-    marketId: number,
-    options: { isCmc?: boolean } = {}
-  ): Promise<OrderbookRaw> {
+  async orderbookRaw(marketId: number): Promise<OrderbookRaw> {
     return this.http.get<OrderbookRaw>('/api/orderbook', {
       marketId,
-      isCmc: options.isCmc ?? false,
+      isCmc: false,
     });
   }
 
   /**
-   * Get OHLCV (candlestick) data
-   * @param marketId - Trading pair ID
-   * @param timeframe - Candle timeframe (e.g., "1h", "1d")
-   * @param options - Additional options
-   * @example
-   * const candles = await client.markets.ohlcv(1, '1h');
+   * Get OHLCV candles.
    */
   async ohlcv(
     marketId: number,
@@ -150,9 +154,7 @@ export class MarketsEndpoint {
   }
 
   /**
-   * Get all available assets
-   * @example
-   * const assets = await client.markets.assets();
+   * Get all available assets.
    */
   async assets(): Promise<Asset[]> {
     const response = await this.http.get<AssetsResponse>('/api/assets');
@@ -160,18 +162,17 @@ export class MarketsEndpoint {
   }
 
   /**
-   * Get a specific asset by symbol
-   * @param symbol - Asset symbol (e.g., "BTC")
+   * Get a single asset from the `assets()` list.
    */
   async asset(symbol: string): Promise<Asset | undefined> {
     const assets = await this.assets();
-    return assets.find(a => a.symbol.toUpperCase() === symbol.toUpperCase());
+    return assets.find((a) => a.symbol.toUpperCase() === symbol.toUpperCase());
   }
 
   /**
-   * Get recent trades for a trading pair
-   * @param marketId - Trading pair ID
-   * @param limit - Number of trades to return
+   * Get recent public trades for a pair. Backend currently hardcodes a
+   * 100-row limit; the `limit` argument is accepted for forward-compat but
+   * has no effect today.
    */
   async trades(
     marketId: number,
@@ -179,10 +180,15 @@ export class MarketsEndpoint {
   ): Promise<
     Array<{
       id: string;
+      trading_pair_id: number;
+      taker_order_id: string;
+      maker_order_id: string;
       price: string;
-      quantity: string;
+      amount: string;
+      taker_fee: string;
+      maker_fee: string;
       side: 'buy' | 'sell';
-      timestamp: string;
+      created_at: string | null;
     }>
   > {
     return this.http.get('/api/trades', { marketId, limit });

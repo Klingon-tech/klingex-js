@@ -1,107 +1,97 @@
 /**
- * WebSocket Streaming Example
+ * WebSocket streaming example.
  *
- * This example demonstrates how to:
- * - Connect to the WebSocket server
- * - Subscribe to real-time market data
- * - Handle user order and balance updates
+ * The new SDK delivers raw server payloads to handlers (no SDK-side shaping).
+ * Each market subscription returns ticker + orderbook + trade messages — use
+ * `msg.type` to discriminate. User channels require the API key's `read` scope.
  */
 
 import { KlingEx } from 'klingex';
 
+interface MarketMsg {
+  type?: string;
+  market?: string;
+  // ticker fields
+  last_price?: string;
+  bid?: string;
+  ask?: string;
+  // orderbook fields (raw [price, qty] tuples)
+  bids?: Array<[string | number, string | number]>;
+  asks?: Array<[string | number, string | number]>;
+  // trade fields
+  side?: string;
+  price?: string;
+  amount?: string;
+}
+
+interface OrderMsg {
+  id?: string;
+  status?: string;
+  side?: string;
+  amount?: string;
+  filled_amount?: string;
+  price?: string;
+}
+
+interface BalanceMsg {
+  symbol?: string;
+  balance?: string;
+  locked_balance?: string;
+}
+
 async function main() {
-  // Initialize client with your API key
   const client = new KlingEx({
-    apiKey: process.env.KLINGEX_API_KEY || 'your-api-key-here',
+    apiKey: process.env.KLINGEX_API_KEY ?? 'your-api-key-here',
   });
 
-  // First, get market info to find the market ID
-  const markets = await client.markets.list();
-  const btcUsdt = markets.find(
-    m => m.base_asset_symbol === 'BTC' && m.quote_asset_symbol === 'USDT'
-  );
+  client.ws.onError((err) => console.error('WebSocket error:', err.message));
 
-  if (!btcUsdt) {
-    console.error('BTC-USDT market not found');
-    process.exit(1);
-  }
+  console.log('Connecting...');
+  await client.ws.connect(); // waits for auth_result before resolving
+  console.log('Connected.\n');
 
-  console.log(`Found BTC-USDT market (ID: ${btcUsdt.id})`);
-  console.log(`Current price: ${btcUsdt.last_price}`);
-  console.log('');
-
-  console.log('Connecting to WebSocket...');
-
-  // Set up error handler
-  client.ws.onError((error) => {
-    console.error('WebSocket error:', error.message);
+  // One subscription per pair delivers ticker + orderbook + trades.
+  const unsubMarket = client.ws.subscribeMarket('BTC-USDT', (raw) => {
+    const msg = raw as MarketMsg;
+    switch (msg.type) {
+      case 'ticker':
+        console.log(`[ticker ${msg.market}] last=${msg.last_price} bid=${msg.bid} ask=${msg.ask}`);
+        break;
+      case 'orderbook': {
+        const bid = msg.bids?.[0];
+        const ask = msg.asks?.[0];
+        if (bid && ask) {
+          console.log(`[orderbook ${msg.market}] bid ${bid[0]}@${bid[1]} | ask ${ask[0]}@${ask[1]}`);
+        }
+        break;
+      }
+      case 'trade':
+      case 'trades':
+      case 'trade_update':
+        console.log(`[trade ${msg.market}] ${msg.side} ${msg.amount} @ ${msg.price}`);
+        break;
+    }
   });
 
-  // Connect
-  await client.ws.connect();
-  console.log('Connected!\n');
-
-  // =========================================================================
-  // Subscribe to Orderbook Updates
-  // =========================================================================
-  console.log('Subscribing to BTC-USDT orderbook...');
-  const unsubOrderbook = client.ws.orderbook('BTC-USDT', (orderbook) => {
-    const bestBid = orderbook.bids[0];
-    const bestAsk = orderbook.asks[0];
-    const spread = parseFloat(bestAsk?.price || '0') - parseFloat(bestBid?.price || '0');
-
-    console.log(
-      `[Orderbook] Bid: ${bestBid?.price} | Ask: ${bestAsk?.price} | Spread: ${spread.toFixed(2)}`
-    );
+  // User channels (require `read` scope on the API key).
+  client.ws.userOrders((raw) => {
+    const o = raw as OrderMsg;
+    console.log(`[order] ${o.id} ${o.status} ${o.side} ${o.filled_amount}/${o.amount} @ ${o.price}`);
   });
 
-  // =========================================================================
-  // Subscribe to Trade Updates
-  // =========================================================================
-  console.log('Subscribing to BTC-USDT trades...');
-  client.ws.trades('BTC-USDT', (trade) => {
-    const side = trade.side === 'buy' ? 'BUY' : 'SELL';
-    console.log(`[Trade] ${side} ${trade.quantity} @ ${trade.price}`);
+  client.ws.userBalances((raw) => {
+    const b = raw as BalanceMsg;
+    console.log(`[balance] ${b.symbol}: ${b.balance} (locked=${b.locked_balance})`);
   });
 
-  // =========================================================================
-  // Subscribe to Ticker Updates
-  // =========================================================================
-  console.log('Subscribing to BTC-USDT ticker...');
-  client.ws.ticker('BTC-USDT', (ticker) => {
-    console.log(
-      `[Ticker] Price: ${ticker.last_price} | Bid: ${ticker.bid} | Ask: ${ticker.ask}`
-    );
-  });
+  console.log('Streaming... Ctrl+C to exit.\n');
 
-  // =========================================================================
-  // Subscribe to User Order Updates (requires authentication)
-  // =========================================================================
-  console.log('Subscribing to user order updates...');
-  client.ws.userOrders((order) => {
-    console.log(`[Order Update] ${order.id} - ${order.status}`);
-    console.log(`  Side: ${order.side} | Amount: ${order.amount} | Price: ${order.price}`);
-  });
-
-  // =========================================================================
-  // Subscribe to User Balance Updates (requires authentication)
-  // =========================================================================
-  console.log('Subscribing to user balance updates...\n');
-  client.ws.userBalances((balance) => {
-    console.log(`[Balance Update] ${balance.symbol}: ${balance.human_available} available`);
-  });
-
-  console.log('Streaming data... Press Ctrl+C to exit\n');
-
-  // Keep the process running
   process.on('SIGINT', () => {
-    console.log('\nDisconnecting...');
-    unsubOrderbook(); // Unsubscribe from orderbook
+    unsubMarket();
     client.ws.disconnect();
     process.exit(0);
   });
 
-  // Prevent exit
   await new Promise(() => {});
 }
 

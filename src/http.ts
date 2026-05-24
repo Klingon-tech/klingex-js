@@ -8,8 +8,11 @@ import {
 
 export interface HttpClientConfig {
   baseUrl: string;
-  apiKey?: string;
-  jwt?: string;
+  /**
+   * API key. Required: the SDK only supports API-key auth. JWT is intentionally
+   * not supported — JWT-only backend routes are not exposed here.
+   */
+  apiKey: string;
   timeout: number;
 }
 
@@ -28,15 +31,14 @@ export class HttpClient {
   }
 
   /**
-   * Update authentication credentials
+   * Update the API key in place.
    */
-  setAuth(auth: { apiKey?: string; jwt?: string }): void {
-    if (auth.apiKey) this.config.apiKey = auth.apiKey;
-    if (auth.jwt) this.config.jwt = auth.jwt;
+  setApiKey(apiKey: string): void {
+    this.config.apiKey = apiKey;
   }
 
   /**
-   * Make an HTTP request to the API
+   * Make an HTTP request to the API.
    */
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const { method = 'GET', body, params, headers = {} } = options;
@@ -62,11 +64,9 @@ export class HttpClient {
       ...headers,
     };
 
-    // Add authentication
+    // Add API-key authentication. JWT/Bearer is intentionally unsupported.
     if (this.config.apiKey) {
       requestHeaders['X-API-Key'] = this.config.apiKey;
-    } else if (this.config.jwt) {
-      requestHeaders['Authorization'] = `Bearer ${this.config.jwt}`;
     }
 
     // Create abort controller for timeout
@@ -120,7 +120,7 @@ export class HttpClient {
   }
 
   /**
-   * Handle HTTP error responses
+   * Handle HTTP error responses.
    */
   private handleError(status: number, data: unknown): never {
     const errorMessage = this.extractErrorMessage(data);
@@ -128,9 +128,10 @@ export class HttpClient {
     switch (status) {
       case 401:
         throw new AuthenticationError(errorMessage);
-      case 429:
+      case 429: {
         const retryAfter = this.extractRetryAfter(data);
         throw new RateLimitError(errorMessage, retryAfter);
+      }
       case 400:
         if (errorMessage.toLowerCase().includes('insufficient')) {
           throw new InsufficientFundsError(errorMessage);
@@ -142,7 +143,7 @@ export class HttpClient {
   }
 
   /**
-   * Extract error message from response
+   * Extract error message from response.
    */
   private extractErrorMessage(data: unknown): string {
     if (typeof data === 'string') return data;
@@ -154,7 +155,7 @@ export class HttpClient {
   }
 
   /**
-   * Extract retry-after value from rate limit response
+   * Extract retry-after value from rate limit response.
    */
   private extractRetryAfter(data: unknown): number | undefined {
     if (typeof data === 'object' && data !== null) {

@@ -98,8 +98,9 @@ async function main() {
     // =========================================================================
     console.log('\nPlacing a limit buy order...');
 
-    // Calculate a price 5% below current market price
-    const currentPrice = parseFloat(ticker?.last_price || btcUsdt.last_price);
+    // Calculate a price 5% below current market price (both fields are nullable)
+    const priceStr = ticker?.last_price ?? btcUsdt.last_price ?? '0';
+    const currentPrice = parseFloat(priceStr);
     const limitPrice = (currentPrice * 0.95).toFixed(2);
 
     try {

@@ -7,6 +7,9 @@ import type {
   CancelOrderResponse,
   GetOrdersParams,
   UserOrdersResponse,
+  OrdersHistoryParams,
+  OrdersHistoryResponse,
+  CancelAllOrdersResult,
 } from '../types';
 
 export class OrdersEndpoint {
@@ -17,27 +20,27 @@ export class OrdersEndpoint {
   }
 
   /**
-   * Submit a new order
-   * @param params - Order parameters
+   * Submit a new order.
+   *
    * @example
-   * // Buy 1.5 BTC at $50,000 (human-readable values)
+   * // Limit buy 0.5 BTC at $50,000 (human-readable values by default).
    * const order = await client.orders.submit({
    *   symbol: 'BTC-USDT',
    *   tradingPairId: 1,
    *   side: 'BUY',
-   *   quantity: '1.5',
+   *   quantity: '0.5',
    *   price: '50000.00'
    * });
    *
    * @example
-   * // Market order (price = 0)
+   * // Market order — pass "0" for price. The matching engine uses a
+   * // fixed 5% slippage tolerance; there is no client-tunable slippage.
    * const order = await client.orders.submit({
    *   symbol: 'BTC-USDT',
    *   tradingPairId: 1,
    *   side: 'BUY',
-   *   quantity: '1.0',
-   *   price: '0',
-   *   slippage: 0.01  // 1% slippage tolerance
+   *   quantity: '0.1',
+   *   price: '0'
    * });
    */
   async submit(params: SubmitOrderParams): Promise<SubmitOrderResponse> {
@@ -50,19 +53,12 @@ export class OrdersEndpoint {
       quantity: params.quantity,
       price: params.price,
       rawValues,
-      slippage: params.slippage,
     });
   }
 
   /**
-   * Cancel an existing order
-   * @param params - Order ID and trading pair ID
-   * @example
-   * const result = await client.orders.cancel({
-   *   orderId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
-   *   tradingPairId: 1
-   * });
-   * console.log(`Released balance: ${result.released_balance}`);
+   * Cancel an existing order. `tradingPairId` is required because the
+   * `orders` table is LIST-partitioned by trading pair on the backend.
    */
   async cancel(params: CancelOrderParams): Promise<CancelOrderResponse> {
     return this.http.post<CancelOrderResponse>('/api/cancel-order', {
@@ -72,133 +68,107 @@ export class OrdersEndpoint {
   }
 
   /**
-   * Cancel all open orders for a trading pair
-   * @param tradingPairId - Trading pair ID
-   * @example
-   * const result = await client.orders.cancelAll(1);
-   * console.log(`Cancelled ${result.cancelledCount} orders`);
+   * Cancel all open orders for a given trading pair.
    */
-  async cancelAll(tradingPairId: number): Promise<{
-    message: string;
-    cancelledCount: number;
-    totalOrders: number;
-    cancelledOrderIds: string[];
-    totalReleasedBalance: string;
-  }> {
-    return this.http.post('/api/cancel-all-orders', { tradingPairId });
+  async cancelAll(tradingPairId: number): Promise<CancelAllOrdersResult> {
+    return this.http.post<CancelAllOrdersResult>('/api/cancel-all-orders', {
+      tradingPairId,
+    });
   }
 
   /**
-   * Get your open orders
-   * @param params - Filter parameters
-   * @example
-   * // Get all open orders
-   * const orders = await client.orders.list();
-   *
-   * // Get orders for specific trading pair
-   * const orders = await client.orders.list({ tradingPairId: 1 });
+   * Get your currently open orders.
    */
   async list(params: GetOrdersParams = {}): Promise<Order[]> {
     const response = await this.http.get<UserOrdersResponse>('/api/user-orders', {
       tradingPairId: params.tradingPairId,
       status: params.status,
-      limit: params.limit || 50,
+      limit: params.limit ?? 50,
     });
     return response.orders || [];
   }
 
   /**
-   * Get order history (including filled/cancelled orders)
-   * @param params - Filter and pagination parameters
+   * Get order history (open, filled, partially filled, cancelled, rejected).
+   * Supports the full filter set the backend understands.
    */
-  async history(params: {
-    tradingPairId?: number;
-    status?: string;
-    limit?: number;
-    offset?: number;
-  } = {}): Promise<{
-    orders: Order[];
-    total: number;
-    limit: number;
-    offset: number;
-  }> {
-    return this.http.get('/api/orders-history', {
+  async history(params: OrdersHistoryParams = {}): Promise<OrdersHistoryResponse> {
+    return this.http.get<OrdersHistoryResponse>('/api/orders-history', {
       tradingPairId: params.tradingPairId,
       status: params.status,
-      limit: params.limit || 50,
-      offset: params.offset || 0,
+      market: params.market,
+      side: params.side ? params.side.toLowerCase() : undefined,
+      type: params.type,
+      search: params.search,
+      from: params.from,
+      to: params.to,
+      limit: params.limit ?? 50,
+      offset: params.offset ?? 0,
     });
   }
 
   /**
-   * Get a specific order by ID
-   * @param orderId - Order UUID
+   * Get a specific order by ID. Searches open orders first; falls back to the
+   * order history endpoint to find filled/cancelled orders.
    */
   async get(orderId: string): Promise<Order | undefined> {
-    const orders = await this.list();
-    return orders.find(o => o.id === orderId);
+    const open = await this.list({ limit: 100 });
+    const hit = open.find((o) => o.id === orderId);
+    if (hit) return hit;
+
+    // Fall back to history (matches by ID — backend supports an order-ID search).
+    const history = await this.history({ search: orderId, limit: 50 });
+    const fromHistory = history.orders.find((o) => o.id === orderId);
+    if (!fromHistory) return undefined;
+    // Coerce history entry into the Order shape (nullable price is the main diff).
+    return {
+      id: fromHistory.id,
+      trading_pair_id: fromHistory.trading_pair_id,
+      side: fromHistory.side,
+      type: fromHistory.type,
+      price: fromHistory.price ?? '0',
+      amount: fromHistory.amount,
+      filled_amount: fromHistory.filled_amount,
+      status: fromHistory.status,
+      created_at: fromHistory.created_at,
+      updated_at: fromHistory.updated_at,
+      human_price: fromHistory.human_price,
+      human_amount: fromHistory.human_amount,
+      human_filled_amount: fromHistory.human_filled_amount,
+      human_remaining: fromHistory.human_remaining,
+      human_total: fromHistory.human_total,
+    };
   }
 
   // =========================================================================
-  // Convenience methods for common order types
+  // Convenience helpers
   // =========================================================================
 
-  /**
-   * Place a limit buy order (human-readable values)
-   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
-   * @param tradingPairId - Trading pair ID
-   * @param quantity - Amount to buy
-   * @param price - Price per unit
-   */
   async limitBuy(
     symbol: string,
     tradingPairId: number,
     quantity: string,
     price: string
   ): Promise<SubmitOrderResponse> {
-    return this.submit({
-      symbol,
-      tradingPairId,
-      side: 'BUY',
-      quantity,
-      price,
-    });
+    return this.submit({ symbol, tradingPairId, side: 'BUY', quantity, price });
   }
 
-  /**
-   * Place a limit sell order (human-readable values)
-   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
-   * @param tradingPairId - Trading pair ID
-   * @param quantity - Amount to sell
-   * @param price - Price per unit
-   */
   async limitSell(
     symbol: string,
     tradingPairId: number,
     quantity: string,
     price: string
   ): Promise<SubmitOrderResponse> {
-    return this.submit({
-      symbol,
-      tradingPairId,
-      side: 'SELL',
-      quantity,
-      price,
-    });
+    return this.submit({ symbol, tradingPairId, side: 'SELL', quantity, price });
   }
 
   /**
-   * Place a market buy order
-   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
-   * @param tradingPairId - Trading pair ID
-   * @param quantity - Amount to buy
-   * @param slippage - Slippage tolerance (0-1, e.g., 0.01 for 1%)
+   * Place a market buy. The matching engine applies a fixed 5% slippage cap.
    */
   async marketBuy(
     symbol: string,
     tradingPairId: number,
-    quantity: string,
-    slippage = 0.01
+    quantity: string
   ): Promise<SubmitOrderResponse> {
     return this.submit({
       symbol,
@@ -206,22 +176,16 @@ export class OrdersEndpoint {
       side: 'BUY',
       quantity,
       price: '0',
-      slippage,
     });
   }
 
   /**
-   * Place a market sell order
-   * @param symbol - Trading pair symbol (e.g., "BTC-USDT")
-   * @param tradingPairId - Trading pair ID
-   * @param quantity - Amount to sell
-   * @param slippage - Slippage tolerance (0-1, e.g., 0.01 for 1%)
+   * Place a market sell. The matching engine applies a fixed 5% slippage cap.
    */
   async marketSell(
     symbol: string,
     tradingPairId: number,
-    quantity: string,
-    slippage = 0.01
+    quantity: string
   ): Promise<SubmitOrderResponse> {
     return this.submit({
       symbol,
@@ -229,7 +193,6 @@ export class OrdersEndpoint {
       side: 'SELL',
       quantity,
       price: '0',
-      slippage,
     });
   }
 }
